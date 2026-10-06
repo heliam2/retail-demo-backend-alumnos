@@ -4,7 +4,7 @@ La **API REST completa** que le da vida a la tienda simulada "ChileRetail": mane
 catálogo, autenticación, carro, checkout, órdenes, reseñas, wishlist, direcciones y
 envíos con lógica de negocio real (no son mocks ni respuestas fijas). Es la mitad
 backend del proyecto — el frontend vive en el repo hermano
-[`retail-demo-frontend`](../retail-demo-frontend);
+[`retail-demo-frontend`](https://github.com/heliam2/retail-demo-frontend-alumnos);
 
 Pensado como campo de práctica de QA: además de servir la API, viene con las
 **pruebas unitarias ya escritas** (13 suites, 108 tests Jest) como referencia. Las
