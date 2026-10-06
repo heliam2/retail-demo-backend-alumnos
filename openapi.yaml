@@ -1,0 +1,1518 @@
+openapi: 3.0.3
+info:
+  title: QA Retail — API Backend
+  description: >
+    Contrato de la API REST de "ChileRetail", la tienda demo usada como campo de
+    practica de QA. Documenta, en formato contract-first (OpenAPI), el
+    comportamiento real de cada endpoint ya implementado en `src/routes/*.routes.js`:
+    parametros, cuerpos de peticion, respuestas y codigos de estado (incluyendo los
+    casos negativos sembrados a proposito para practicas de testing).
+
+    Reglas transversales:
+    - Todas las rutas estan bajo el prefijo `/api` (ver `servers`).
+    - Las rutas marcadas con el candado requieren `Authorization: Bearer <token>`
+      (JWT, expira en 2h). Sin token o token invalido/expirado -> **401**.
+    - Las rutas marcadas ademas como "admin" requieren `role: admin` en el token.
+      Autenticado pero sin rol admin -> **403**.
+    - Toda ruta no definida en este contrato responde **404**
+      `{ "error": "Ruta no encontrada" }`.
+    - Cualquier excepcion no controlada responde **500**
+      `{ "error": "Error interno del servidor" }`.
+  version: "1.0.0"
+  contact:
+    name: QA Retail — Backend
+servers:
+  - url: http://localhost:4000/api
+    description: Servidor local de desarrollo
+
+tags:
+  - name: health
+    description: Estado del servicio y utilidades de testing.
+  - name: auth
+    description: Registro, login y gestion del perfil propio.
+  - name: products
+    description: Catalogo de productos y disponibilidad por tienda.
+  - name: cart
+    description: Carro de compras del usuario autenticado.
+  - name: orders
+    description: Cotizacion de totales, checkout y ordenes propias.
+  - name: reviews
+    description: Resenas de productos.
+  - name: wishlist
+    description: Lista de favoritos del usuario autenticado.
+  - name: addresses
+    description: Direcciones de despacho del usuario autenticado.
+  - name: admin-orders
+    description: Gestion de ordenes de todos los usuarios (solo admin).
+  - name: shipping
+    description: Cotizacion de envio por comuna.
+
+security: []
+
+paths:
+  # ---------------------------------------------------------------- health --
+  /health:
+    get:
+      tags: [health]
+      summary: Estado del servicio
+      operationId: getHealth
+      responses:
+        "200":
+          description: El servicio esta en linea.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+                required: [status]
+
+  /test/reset:
+    post:
+      tags: [health]
+      summary: Reinicia la "base de datos" al seed inicial
+      description: >
+        Hook exclusivo para pruebas: vuelve a llamar `seedData()`. Util para que
+        cada suite/escenario parta de datos conocidos y reproducibles.
+      operationId: resetTestData
+      responses:
+        "200":
+          description: Estado reiniciado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResetResponse"
+
+  # ------------------------------------------------------------------ auth --
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Registra un nuevo usuario (rol customer)
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Usuario creado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: >
+            Faltan campos obligatorios, email con formato invalido, o password
+            con menos de 6 caracteres.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: El email ya esta registrado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Inicia sesion y obtiene un JWT
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Login exitoso.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          description: Faltan email o password.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Email no registrado o password incorrecto.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Perfil del usuario autenticado
+      operationId: getMe
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Perfil del usuario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: El usuario del token ya no existe.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [auth]
+      summary: Actualiza nombre, telefono, RUT y/o fecha de nacimiento
+      description: >
+        El email, el rol y los puntos de lealtad **no** son editables por esta via.
+        Cada campo es opcional e independiente; enviar `null` o `""` en `phone`,
+        `rut` o `birthDate` los limpia.
+      operationId: updateMe
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMeRequest"
+      responses:
+        "200":
+          description: Perfil actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: >
+            `name` vacio, `phone` que no cumple `+56 9 XXXX XXXX`, `rut` invalido
+            (modulo 11) o `birthDate` con formato distinto de `YYYY-MM-DD`,
+            futura, o de mas de 120 anios de antiguedad.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: El usuario del token ya no existe.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /auth/password:
+    put:
+      tags: [auth]
+      summary: Cambia la contraseña del usuario autenticado
+      operationId: updatePassword
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePasswordRequest"
+      responses:
+        "200":
+          description: Contraseña actualizada.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                required: [ok]
+        "400":
+          description: >
+            Faltan `currentPassword`/`newPassword`, o `newPassword` tiene menos
+            de 6 caracteres.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Sin token, token invalido, o `currentPassword` incorrecta.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: El usuario del token ya no existe.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  # -------------------------------------------------------------- products --
+  /products:
+    get:
+      tags: [products]
+      summary: Lista productos, con filtros opcionales
+      operationId: listProducts
+      parameters:
+        - name: category
+          in: query
+          description: Filtra por categoria exacta (case-insensitive).
+          schema: { type: string }
+          example: Tecnologia
+        - name: search
+          in: query
+          description: Filtra por coincidencia parcial en el nombre (case-insensitive).
+          schema: { type: string }
+          example: zapatillas
+      responses:
+        "200":
+          description: Lista de productos (vacia si no hay coincidencias).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [products]
+      summary: Crea un producto (admin)
+      operationId: createProduct
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductCreateRequest"
+      responses:
+        "201":
+          description: Producto creado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          description: >
+            Faltan `sku`, `name`, `price`, `stock` o `category`, o `price`/`stock`
+            son negativos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /products/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    get:
+      tags: [products]
+      summary: Obtiene un producto por id
+      operationId: getProductById
+      responses:
+        "200":
+          description: Producto encontrado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    put:
+      tags: [products]
+      summary: Actualiza un producto (admin)
+      description: Todos los campos son opcionales; solo se aplican los enviados.
+      operationId: updateProduct
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductUpdateRequest"
+      responses:
+        "200":
+          description: Producto actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          description: "`price` o `stock` negativos."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [products]
+      summary: Elimina un producto (admin)
+      operationId: deleteProduct
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204":
+          description: Producto eliminado.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /products/{id}/availability:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    get:
+      tags: [products]
+      summary: Disponibilidad de stock por tienda fisica
+      operationId: getProductAvailability
+      responses:
+        "200":
+          description: Stock del producto en cada tienda.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StoreAvailability"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  # ------------------------------------------------------------------ cart --
+  /cart:
+    get:
+      tags: [cart]
+      summary: Carro del usuario autenticado
+      description: >
+        Cada item viene "enriquecido" con el producto completo y `lineTotal`
+        (`price * quantity`). Si el producto fue eliminado del catalogo,
+        `product` es `null` y `lineTotal` es `0`.
+      operationId: getCart
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Contenido del carro.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /cart/items:
+    post:
+      tags: [cart]
+      summary: Agrega un producto al carro (o acumula cantidad si ya existe)
+      operationId: addCartItem
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCartItemRequest"
+      responses:
+        "201":
+          description: Item agregado; se retorna el carro completo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartResponse"
+        "400":
+          description: Faltan `productId`/`quantity`, o `quantity` no es mayor que 0.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: >
+            Stock insuficiente: la cantidad acumulada (existente + solicitada)
+            supera el `stock` disponible del producto.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /cart/items/{productId}:
+    parameters:
+      - name: productId
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    put:
+      tags: [cart]
+      summary: Fija la cantidad de un item existente en el carro
+      description: >
+        No valida contra el `stock` disponible (a diferencia de `POST /cart/items`).
+        Para eliminar el item usar `DELETE` en vez de `quantity: 0`.
+      operationId: setCartItemQuantity
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetCartItemQuantityRequest"
+      responses:
+        "200":
+          description: Carro actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartResponse"
+        "400":
+          description: "`quantity` ausente o no mayor que 0."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: El producto no existe, o no esta en el carro del usuario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [cart]
+      summary: Elimina un item del carro
+      operationId: removeCartItem
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Carro actualizado.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CartResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: El producto no estaba en el carro del usuario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  # ---------------------------------------------------------------- orders --
+  /orders/quote:
+    post:
+      tags: [orders]
+      summary: Calcula los totales del carro actual, sin confirmar la compra
+      description: >
+        Operacion idempotente, sin efectos secundarios (no toca stock, carro ni
+        ordenes). Pensada para el paso "aplicar cupon" antes del checkout.
+      operationId: quoteOrder
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderQuoteRequest"
+      responses:
+        "200":
+          description: Totales calculados.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrderTotals"
+        "400":
+          description: >
+            El carro esta vacio, o `couponCode` no existe, esta inactivo, expirado,
+            o no alcanza el `minOrderAmount` del cupon.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /orders/checkout:
+    post:
+      tags: [orders]
+      summary: Confirma la compra del carro actual
+      description: >
+        Revalida el stock (puede haber cambiado desde que se agrego al carro),
+        descuenta stock, crea la orden (snapshot de items y precios, estado
+        `pagado`) y vacia el carro — todo en una sola unidad de trabajo
+        (Unit of Work): si algo falla, no se persiste ningun cambio parcial.
+      operationId: checkout
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderQuoteRequest"
+      responses:
+        "201":
+          description: Orden creada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          description: El carro esta vacio, o el cupon enviado no es valido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Un producto del carro ya no existe en el catalogo.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: >
+            Stock insuficiente para uno de los productos del carro al momento de
+            pagar (condicion de carrera clasica entre agregar al carro y pagar).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /orders:
+    get:
+      tags: [orders]
+      summary: Lista las ordenes del usuario autenticado
+      operationId: listMyOrders
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Ordenes del usuario (vacia si no tiene ninguna).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /orders/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    get:
+      tags: [orders]
+      summary: Obtiene una orden por id
+      description: >
+        **Nota de contrato:** la implementacion actual no filtra por
+        propietario — cualquier usuario autenticado que conozca el `id` puede
+        leer la orden. Documentado para que se evalue/pruebe explicitamente
+        (candidato a control de autorizacion adicional).
+      operationId: getOrderById
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Orden encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  # --------------------------------------------------------------- reviews --
+  /reviews/product/{productId}:
+    parameters:
+      - name: productId
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    get:
+      tags: [reviews]
+      summary: Lista las resenas de un producto, con su promedio
+      operationId: getProductReviews
+      responses:
+        "200":
+          description: Resenas del producto.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewsByProductResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /reviews:
+    post:
+      tags: [reviews]
+      summary: Crea o actualiza la resena del usuario sobre un producto
+      description: >
+        Una resena por usuario y producto: si el usuario ya habia reseniado ese
+        producto, se actualiza (responde **200**); si es la primera vez, se crea
+        (responde **201**).
+      operationId: upsertReview
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewCreateRequest"
+      responses:
+        "200":
+          description: Resena existente del usuario para ese producto, actualizada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "201":
+          description: Resena creada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+        "400":
+          description: >
+            Faltan `productId`/`rating`, o `rating` no es un entero entre 1 y 5.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /reviews/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    delete:
+      tags: [reviews]
+      summary: Elimina una resena propia
+      operationId: deleteReview
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204":
+          description: Resena eliminada.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: La resena existe pero pertenece a otro usuario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  # -------------------------------------------------------------- wishlist --
+  /wishlist:
+    get:
+      tags: [wishlist]
+      summary: Lista de favoritos del usuario autenticado
+      operationId: getWishlist
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Productos en la wishlist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WishlistResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /wishlist/items:
+    post:
+      tags: [wishlist]
+      summary: Agrega un producto a la wishlist (idempotente)
+      operationId: addWishlistItem
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WishlistAddRequest"
+      responses:
+        "201":
+          description: Wishlist actualizada (no duplica si ya existia).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WishlistResponse"
+        "400":
+          description: Falta `productId`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /wishlist/items/{productId}:
+    parameters:
+      - name: productId
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    delete:
+      tags: [wishlist]
+      summary: Quita un producto de la wishlist
+      description: >
+        Idempotente: responde **200** incluso si el producto no estaba en la
+        wishlist (no es un error de contrato).
+      operationId: removeWishlistItem
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Wishlist actualizada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WishlistResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  # ------------------------------------------------------------- addresses --
+  /addresses:
+    get:
+      tags: [addresses]
+      summary: Lista las direcciones del usuario autenticado
+      operationId: listAddresses
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Direcciones del usuario (vacia si no tiene ninguna).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Address"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    post:
+      tags: [addresses]
+      summary: Crea una direccion
+      operationId: createAddress
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddressCreateRequest"
+      responses:
+        "201":
+          description: Direccion creada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Address"
+        "400":
+          description: Faltan `label`, `street`, `city` o `region`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /addresses/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    put:
+      tags: [addresses]
+      summary: Actualiza una direccion propia
+      description: Todos los campos son opcionales; solo se aplican los enviados.
+      operationId: updateAddress
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddressUpdateRequest"
+      responses:
+        "200":
+          description: Direccion actualizada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Address"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: La direccion no existe o no pertenece al usuario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+    delete:
+      tags: [addresses]
+      summary: Elimina una direccion propia
+      operationId: deleteAddress
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204":
+          description: Direccion eliminada.
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: La direccion no existe o no pertenece al usuario.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  # ----------------------------------------------------------- admin-orders --
+  /admin/orders:
+    get:
+      tags: [admin-orders]
+      summary: Lista todas las ordenes de todos los usuarios (admin)
+      operationId: adminListOrders
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Todas las ordenes del sistema.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /admin/orders/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    get:
+      tags: [admin-orders]
+      summary: Obtiene cualquier orden por id (admin)
+      operationId: adminGetOrderById
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: Orden encontrada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  /admin/orders/{id}/status:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer }
+        example: 1
+    put:
+      tags: [admin-orders]
+      summary: Actualiza el estado de una orden (admin)
+      description: >
+        Flujo de negocio esperado: `pagado -> enviado -> entregado` (o
+        `cancelado` desde `pagado`/`enviado`). **Nota de contrato:** la
+        implementacion actual no valida el valor de `status` contra ese flujo
+        ni contra un enum — acepta cualquier string no vacio. Buen candidato
+        para pruebas de validacion de entrada.
+      operationId: adminUpdateOrderStatus
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderStatusUpdateRequest"
+      responses:
+        "200":
+          description: Orden actualizada.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+  # --------------------------------------------------------------- shipping --
+  /shipping/quote:
+    post:
+      tags: [shipping]
+      summary: Cotiza el envio de un producto a una comuna
+      description: >
+        No requiere autenticacion. Clasifica la comuna (normalizada a
+        minusculas, sin tildes forzadas) en 3 franjas: express (gratis, llega
+        mañana), estandar ($2.990, 2 dias habiles) o resto ($4.990, 3-5 dias
+        habiles).
+      operationId: quoteShipping
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShippingQuoteRequest"
+      responses:
+        "200":
+          description: Cotizacion de envio.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShippingQuoteResponse"
+        "400":
+          description: Faltan `productId` o `comuna`.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/ServerError"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        JWT devuelto por `POST /auth/register` o `POST /auth/login`. Payload:
+        `{ id, email, role }`. Expira en 2 horas.
+
+  responses:
+    Unauthorized:
+      description: Sin token (`Token no proporcionado`) o token invalido/expirado (`Token invalido o expirado`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Autenticado, pero sin rol admin (`Requiere rol admin`).
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: El recurso solicitado no existe.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServerError:
+      description: Error interno no controlado.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+      example: { error: "Mensaje descriptivo del error" }
+
+    ResetResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: reset
+        counts:
+          type: object
+          properties:
+            users: { type: integer, example: 2 }
+            products: { type: integer, example: 24 }
+          required: [users, products]
+      required: [status, counts]
+
+    Role:
+      type: string
+      enum: [customer, admin]
+
+    User:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        email: { type: string, format: email, example: cliente@demo.cl }
+        name: { type: string, example: Cliente Demo }
+        phone:
+          type: string
+          nullable: true
+          example: "+56 9 1234 5678"
+        rut:
+          type: string
+          nullable: true
+          example: "18.420.789-3"
+        birthDate:
+          type: string
+          format: date
+          nullable: true
+          example: "1992-10-14"
+        role:
+          $ref: "#/components/schemas/Role"
+        loyaltyPoints: { type: integer, example: 1450 }
+        createdAt: { type: string, format: date-time }
+      required: [id, email, name, phone, rut, birthDate, role, loyaltyPoints, createdAt]
+
+    RegisterRequest:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 6 }
+        name: { type: string }
+      required: [email, password, name]
+
+    LoginRequest:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+      required: [email, password]
+
+    AuthResponse:
+      type: object
+      properties:
+        token: { type: string, description: JWT firmado, expira en 2h. }
+        user:
+          $ref: "#/components/schemas/User"
+      required: [token, user]
+
+    UpdateMeRequest:
+      type: object
+      description: Todos los campos son opcionales.
+      properties:
+        name: { type: string }
+        phone:
+          type: string
+          nullable: true
+          description: 'Formato `+56 9 XXXX XXXX` (acepta variantes sin "+" o espacios). `null`/`""` limpia el campo.'
+          example: "+56 9 8765 4321"
+        rut:
+          type: string
+          nullable: true
+          description: Validado con algoritmo modulo 11. `null`/`""` limpia el campo.
+          example: "18420789K"
+        birthDate:
+          type: string
+          nullable: true
+          description: 'Formato `YYYY-MM-DD`, no futura, no mayor a 120 años. `null`/`""` limpia el campo.'
+          example: "1992-10-14"
+
+    UpdatePasswordRequest:
+      type: object
+      properties:
+        currentPassword: { type: string }
+        newPassword: { type: string, minLength: 6 }
+      required: [currentPassword, newPassword]
+
+    Installments:
+      type: object
+      properties:
+        count: { type: integer, example: 12 }
+        interestFree: { type: boolean, example: true }
+      required: [count, interestFree]
+
+    Product:
+      type: object
+      properties:
+        id: { type: integer, example: 1 }
+        sku: { type: string, example: SKU-001 }
+        name: { type: string, example: Zapatillas Urban Runner }
+        description: { type: string }
+        price: { type: number, example: 45990 }
+        listPrice: { type: number, example: 57490 }
+        stock: { type: integer, example: 12 }
+        category: { type: string, example: Calzado }
+        brand: { type: string, example: UrbanStep }
+        isNew: { type: boolean }
+        installments:
+          $ref: "#/components/schemas/Installments"
+        images:
+          type: array
+          items: { type: string }
+          description: Data URIs (SVG) de 3 variantes de color.
+        videoUrl: { type: string, nullable: true }
+        categoryPath:
+          type: array
+          items: { type: string }
+          example: ["Inicio", "Calzado"]
+        warrantyMonths: { type: integer, example: 12 }
+        returnDays: { type: integer, example: 30 }
+        imageUrl: { type: string, description: Data URI (SVG) de portada. }
+      required:
+        - id
+        - sku
+        - name
+        - description
+        - price
+        - stock
+        - category
+        - imageUrl
+
+    ProductCreateRequest:
+      type: object
+      properties:
+        sku: { type: string }
+        name: { type: string }
+        description: { type: string }
+        price: { type: number, minimum: 0 }
+        stock: { type: integer, minimum: 0 }
+        category: { type: string }
+        imageUrl: { type: string }
+      required: [sku, name, price, stock, category]
+
+    ProductUpdateRequest:
+      type: object
+      description: Todos los campos son opcionales; solo se aplican los enviados.
+      properties:
+        name: { type: string }
+        description: { type: string }
+        price: { type: number, minimum: 0 }
+        stock: { type: integer, minimum: 0 }
+        category: { type: string }
+        imageUrl: { type: string }
+
+    StoreAvailability:
+      type: object
+      properties:
+        storeId: { type: integer, example: 1 }
+        storeName: { type: string, example: Tienda Costanera }
+        qty: { type: integer, example: 2 }
+      required: [storeId, storeName, qty]
+
+    CartItem:
+      type: object
+      properties:
+        productId: { type: integer }
+        quantity: { type: integer }
+        product:
+          oneOf:
+            - $ref: "#/components/schemas/Product"
+            - type: "null"
+        lineTotal: { type: number }
+      required: [productId, quantity, product, lineTotal]
+
+    CartResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CartItem"
+      required: [items]
+
+    AddCartItemRequest:
+      type: object
+      properties:
+        productId: { type: integer }
+        quantity: { type: integer, minimum: 1 }
+      required: [productId, quantity]
+
+    SetCartItemQuantityRequest:
+      type: object
+      properties:
+        quantity: { type: integer, minimum: 1 }
+      required: [quantity]
+
+    OrderQuoteRequest:
+      type: object
+      properties:
+        couponCode:
+          type: string
+          nullable: true
+          example: VERANO20
+
+    OrderTotals:
+      type: object
+      properties:
+        subtotal: { type: number, example: 45990 }
+        discount: { type: number, example: 9198 }
+        couponApplied:
+          type: string
+          nullable: true
+          example: VERANO20
+        tax: { type: number, description: IVA 19% sobre (subtotal - discount)., example: 6991 }
+        shipping: { type: number, description: "0 si (subtotal - discount) >= 30000, si no 3000.", example: 0 }
+        total: { type: number, example: 43783 }
+      required: [subtotal, discount, couponApplied, tax, shipping, total]
+
+    OrderItem:
+      type: object
+      description: Snapshot del producto al momento de la compra (no referencia al catalogo vivo).
+      properties:
+        productId: { type: integer }
+        name: { type: string }
+        unitPrice: { type: number }
+        quantity: { type: integer }
+      required: [productId, name, unitPrice, quantity]
+
+    Order:
+      type: object
+      properties:
+        id: { type: integer }
+        userId: { type: integer }
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrderItem"
+        subtotal: { type: number }
+        discount: { type: number }
+        couponApplied:
+          type: string
+          nullable: true
+        tax: { type: number }
+        shipping: { type: number }
+        total: { type: number }
+        status:
+          type: string
+          description: 'Valor inicial siempre "pagado"; actualizable via `PUT /admin/orders/{id}/status`.'
+          example: pagado
+        createdAt: { type: string, format: date-time }
+      required:
+        - id
+        - userId
+        - items
+        - subtotal
+        - discount
+        - couponApplied
+        - tax
+        - shipping
+        - total
+        - status
+        - createdAt
+
+    OrderStatusUpdateRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          description: Sin enum impuesto por el servidor; valores de negocio esperados a continuacion.
+          enum: [pagado, enviado, entregado, cancelado]
+      required: [status]
+
+    Review:
+      type: object
+      properties:
+        id: { type: integer }
+        productId: { type: integer }
+        userId: { type: integer }
+        userName: { type: string, description: Email del autor. }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt:
+          type: string
+          format: date-time
+          description: Presente solo si la resena fue actualizada (no creada).
+      required: [id, productId, userId, userName, rating, comment, createdAt]
+
+    ReviewCreateRequest:
+      type: object
+      properties:
+        productId: { type: integer }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string }
+      required: [productId, rating]
+
+    ReviewsByProductResponse:
+      type: object
+      properties:
+        reviews:
+          type: array
+          items:
+            $ref: "#/components/schemas/Review"
+        average:
+          type: number
+          nullable: true
+          description: Promedio de `rating`; `null` si no hay resenas.
+        count: { type: integer }
+      required: [reviews, average, count]
+
+    WishlistResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Product"
+      required: [items]
+
+    WishlistAddRequest:
+      type: object
+      properties:
+        productId: { type: integer }
+      required: [productId]
+
+    Address:
+      type: object
+      properties:
+        id: { type: integer }
+        label: { type: string, example: Casa }
+        street: { type: string }
+        city: { type: string }
+        region: { type: string }
+        isDefault: { type: boolean }
+      required: [id, label, street, city, region, isDefault]
+
+    AddressCreateRequest:
+      type: object
+      properties:
+        label: { type: string }
+        street: { type: string }
+        city: { type: string }
+        region: { type: string }
+        isDefault: { type: boolean, default: false }
+      required: [label, street, city, region]
+
+    AddressUpdateRequest:
+      type: object
+      description: Todos los campos son opcionales; solo se aplican los enviados.
+      properties:
+        label: { type: string }
+        street: { type: string }
+        city: { type: string }
+        region: { type: string }
+        isDefault: { type: boolean }
+
+    ShippingQuoteRequest:
+      type: object
+      properties:
+        productId: { type: integer }
+        comuna: { type: string, example: Providencia }
+      required: [productId, comuna]
+
+    ShippingQuoteResponse:
+      type: object
+      properties:
+        productId: { type: integer }
+        comuna: { type: string }
+        etaLabel: { type: string, example: Llega mañana }
+        cost: { type: number, example: 0 }
+      required: [productId, comuna, etaLabel, cost]
