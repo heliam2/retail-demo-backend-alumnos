@@ -47,6 +47,25 @@ cp .env.example .env
 npm run dev              # equivalente a "npm start": node src/server.js -> http://localhost:4000
 ```
 
+## Explorar la API con Postman
+
+En la carpeta [`postman/`](./postman) hay una colección lista para importar:
+
+| Archivo | Para qué |
+|---|---|
+| `QA-Retail.postman_collection.json` | 40 peticiones agrupadas por módulo (autenticación, productos, carro, pedidos, reseñas, favoritos, direcciones, admin...) |
+| `QA-Retail.postman_environment.json` | Entorno «QA Retail · Local» con la variable `baseUrl` (`http://localhost:4000/api`) |
+
+**Cómo usarla**
+1. Instala [Postman](https://www.postman.com/downloads/) y abre la app.
+2. **Import** → selecciona los dos archivos de `postman/`.
+3. Arriba a la derecha elige el entorno **QA Retail · Local**.
+4. Levanta el backend (`npm run dev`).
+5. Ejecuta en orden `00 · Sistema > Reset de datos`, `01 · Autenticación > Login cliente` y `Login administrador`: los tokens se guardan solos en variables de la colección.
+6. Explora el resto de las carpetas. Para probar el pago, antes necesitas productos en el carro (`04 · Carro`).
+
+Puedes ejecutar toda la colección en orden con **Run collection**. Las peticiones son un punto de partida: cambia cuerpos y parámetros para observar cómo responde la API en otros escenarios.
+
 ## Cómo correr los tests
 
 ```bash
