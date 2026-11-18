@@ -31,7 +31,14 @@ Feature: Las mismas reglas, pero en aislamiento (contra un doble)
     And request { email: '#(usuarios.cliente.email)', password: '#(usuarios.cliente.password)' }
     When method post
     Then status 200
-    * header Authorization = 'Bearer ' + response.token
+    * def token = response.token
+
+    # OJO, y es una trampa clasica de Karate:
+    #   * header Authorization = ...   aplica SOLO a la peticion siguiente
+    #   * configure headers = { ... }  aplica a TODAS las que vengan
+    # Con 'header', la primera peticion se lo lleva y las demas salen sin token:
+    # el servidor responde 401 y el escenario falla sin que haya defecto real.
+    * configure headers = { Authorization: 'Bearer #(token)' }
 
     Given path 'cart/items'
     And request { productId: '#(productos.barato.id)', quantity: 1 }
