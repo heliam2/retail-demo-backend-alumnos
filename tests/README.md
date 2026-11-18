@@ -39,10 +39,19 @@ npm test -- tests/unitarias           # solo un nivel
 npm test -- pricing                   # por nombre de archivo
 
 npm run dev                           # en otra terminal: la API en el 4000
-npm run karate                        # todas las features de tests/
-npm run karate -- tests/integracion   # solo un nivel
-npm run karate -- --tags @componente  # por etiqueta
+
+npm run karate                                              # todas las features
+npm run karate -- tests/integracion                         # solo un nivel
+npm run karate -- tests/integracion/demo-clase11/cupones.feature   # un archivo
+npm run karate -- --tags @componente                        # por etiqueta
 ```
+
+El reporte HTML queda en `target/karate-reports/karate-summary.html`.
+
+> El doble `componentes/demo-clase11/api-mock.feature` lleva la etiqueta
+> `@ignore`: es un servidor, no una prueba, y sin esa etiqueta Karate lo
+> ejecutaria como si lo fuera. `contra-doble.feature` lo levanta igual con
+> `karate.start()`.
 
 > La primera corrida de Karate descarga jbang y el jar 1.5.2: puede tardar un
 > par de minutos. Las siguientes son inmediatas.

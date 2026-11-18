@@ -1,5 +1,13 @@
-@demo @clase11
+@ignore @demo @clase11
 Feature: Doble de prueba de la API de ChileRetail
+
+  # OJO con la etiqueta @ignore de arriba: Karate la usa para NO tomar este
+  # archivo como una feature de prueba. Sin ella, al correr la carpeta entera
+  # los escenarios de abajo se ejecutarian como si fueran pruebas y ensuciarian
+  # el reporte con resultados que no significan nada.
+  #
+  # El @ignore no impide que contra-doble.feature lo levante con karate.start():
+  # solo evita que se ejecute por si solo.
 
   # Esto NO es una prueba: es un SERVIDOR. Karate trae la capacidad de mock
   # incorporada, sin libreria adicional, y los mocks se escriben en el mismo
