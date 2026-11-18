@@ -24,7 +24,13 @@ Feature: Validacion de cupones en la cotizacion del pedido
     When method post
     Then status 200
     * def token = response.token
-    * header Authorization = 'Bearer ' + token
+
+    # OJO, y es una trampa clasica de Karate:
+    #   * header Authorization = ...   aplica SOLO a la peticion siguiente
+    #   * configure headers = { ... }  aplica a TODAS las que vengan
+    # Con 'header', la primera peticion se lo lleva y las demas salen sin token:
+    # el servidor responde 401 y el escenario falla sin que haya defecto real.
+    * configure headers = { Authorization: 'Bearer #(token)' }
 
 
   @humo
