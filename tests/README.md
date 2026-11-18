@@ -48,12 +48,16 @@ npm run karate -- --tags @componente                        # por etiqueta
 
 El reporte HTML queda en `target/karate-reports/karate-summary.html`.
 
-> **Una trampa clásica al escribir features:** `* header Authorization = ...`
-> aplica **solo a la petición siguiente**. Para que el token viaje en todas las
-> del escenario hay que usar `* configure headers = { Authorization: '...' }`,
-> como hacen las features de `demo-clase11/`. Con `header`, la primera petición
-> se lo lleva y las demás salen sin token: el servidor responde 401 y el
-> escenario falla sin que haya ningún defecto real.
+> **Dos trampas al escribir features en Karate, y las dos dan 401:**
+>
+> `* header Authorization = ...` aplica **solo a la petición siguiente**: la
+> primera se lo lleva y las demás salen sin token. Para que persista en todo el
+> escenario hay que usar `* configure headers = { ... }`.
+>
+> Y una expresión `#(...)` se evalúa **solo si ocupa el valor completo**. Dentro
+> de un texto más largo, `'Bearer #(token)'` viaja literalmente así, con el
+> `#(token)` sin reemplazar. Hay que concatenar antes:
+> `* def authHeader = 'Bearer ' + token` y luego `'#(authHeader)'`.
 
 > El doble `componentes/demo-clase11/api-mock.feature` lleva la etiqueta
 > `@ignore`: es un servidor, no una prueba, y sin esa etiqueta Karate lo
