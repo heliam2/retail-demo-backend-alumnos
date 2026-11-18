@@ -30,12 +30,18 @@ Feature: Los cuatro estados de un cupon, con una sola mecanica
     Then status 200
     * def token = response.token
 
-    # OJO, y es una trampa clasica de Karate:
-    #   * header Authorization = ...   aplica SOLO a la peticion siguiente
-    #   * configure headers = { ... }  aplica a TODAS las que vengan
-    # Con 'header', la primera peticion se lo lleva y las demas salen sin token:
-    # el servidor responde 401 y el escenario falla sin que haya defecto real.
-    * configure headers = { Authorization: 'Bearer #(token)' }
+    # DOS TRAMPAS DE KARATE, las dos en esta misma linea:
+    #
+    # 1) '* header Authorization = ...' aplica SOLO a la peticion siguiente.
+    #    La primera se lo lleva y las demas salen sin token -> 401.
+    #    Por eso se usa 'configure headers', que si persiste en el escenario.
+    #
+    # 2) Una expresion #(...) se evalua solo si ocupa el valor COMPLETO.
+    #    Escrita dentro de un texto mas largo, 'Bearer #(token)' viaja
+    #    literalmente asi, con el #(token) sin reemplazar -> 401 tambien.
+    #    Por eso el 'Bearer ' se concatena antes, en una variable aparte.
+    * def authHeader = 'Bearer ' + token
+    * configure headers = { Authorization: '#(authHeader)' }
 
     # Carro por debajo del minimo de VERANO20 y del umbral de envio gratis.
     Given path 'cart/items'
