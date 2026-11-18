@@ -1,4 +1,4 @@
-const { isValidRut, formatRut, normalizeRut } = require("./rut");
+const { isValidRut, formatRut, normalizeRut } = require("../../../src/utils/rut");
 
 describe("normalizeRut", () => {
   it("quita puntos, guion y espacios", () => {

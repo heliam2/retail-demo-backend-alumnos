@@ -1,7 +1,7 @@
-jest.mock("../db", () => ({ getState: jest.fn(), persist: jest.fn() }));
+jest.mock("../../../src/db", () => ({ getState: jest.fn(), persist: jest.fn() }));
 
-const { getState, persist } = require("../db");
-const productRepo = require("./product.repository");
+const { getState, persist } = require("../../../src/db");
+const productRepo = require("../../../src/repositories/product.repository");
 
 let state;
 

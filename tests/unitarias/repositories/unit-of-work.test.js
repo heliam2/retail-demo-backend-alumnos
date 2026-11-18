@@ -1,7 +1,7 @@
-jest.mock("../db", () => ({ runInTransaction: jest.fn((fn) => fn()) }));
+jest.mock("../../../src/db", () => ({ runInTransaction: jest.fn((fn) => fn()) }));
 
-const { runInTransaction } = require("../db");
-const uow = require("./unit-of-work");
+const { runInTransaction } = require("../../../src/db");
+const uow = require("../../../src/repositories/unit-of-work");
 
 describe("unit-of-work", () => {
   it("runInTransaction delega en db.runInTransaction y devuelve su resultado", () => {

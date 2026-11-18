@@ -5,7 +5,7 @@ const {
   calculateSubtotal,
   findValidCoupon,
   calculateOrderTotals,
-} = require("./pricing");
+} = require("../../../src/utils/pricing");
 
 const products = [
   { id: 1, price: 10000 },
