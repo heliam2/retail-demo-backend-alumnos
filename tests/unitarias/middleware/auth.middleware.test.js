@@ -1,5 +1,5 @@
 const jwt = require("jsonwebtoken");
-const { authRequired, adminRequired, JWT_SECRET } = require("./auth.middleware");
+const { authRequired, adminRequired, JWT_SECRET } = require("../../../src/middleware/auth.middleware");
 
 function mockRes() {
   const res = {};

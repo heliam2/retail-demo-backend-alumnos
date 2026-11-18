@@ -1,7 +1,7 @@
-jest.mock("../db", () => ({ getState: jest.fn() }));
+jest.mock("../../../src/db", () => ({ getState: jest.fn() }));
 
-const { getState } = require("../db");
-const couponRepo = require("./coupon.repository");
+const { getState } = require("../../../src/db");
+const couponRepo = require("../../../src/repositories/coupon.repository");
 
 describe("coupon.repository", () => {
   it("findAll devuelve los cupones del estado", () => {

@@ -11,7 +11,7 @@ describe("db - runInTransaction (Unit of Work)", () => {
     jest.resetModules();
     fs = require("fs");
     fs.existsSync.mockReturnValue(false); // sin data.json -> load() corre seedData() + un persist()
-    db = require("./db");
+    db = require("../../src/db");
     fs.writeFileSync.mockClear(); // ignorar la escritura del seed inicial, no es parte del test
   });
 

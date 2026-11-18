@@ -72,7 +72,7 @@ Puedes ejecutar toda la colección en orden con **Run collection**. Las peticion
 npm test                                        # Jest: pruebas unitarias — 13 suites, 108 tests
 npx jest --coverage --coverageReporters=text    # con cobertura
 
-npx jest src/repositories/cart.repository.test.js   # un archivo puntual
+npx jest tests/unitarias/repositories/cart.repository.test.js   # un archivo puntual
 ```
 
 ### Credenciales de demo
@@ -184,9 +184,15 @@ trabajo:
 
 | Nivel | Dónde | Estado | Aísla |
 |---|---|---|---|
-| **Unitaria** | `src/**/*.test.js` junto al archivo que prueban (ej. `src/utils/pricing.test.js`, `src/repositories/cart.repository.test.js`) | ✅ Incluida | Todo — sin Express, sin HTTP, `../db` mockeado con `jest.mock` |
-| **Componente** | `src/routes/*.routes.component.test.js` (convención sugerida) | ✍️ Lo escribes tú | Solo los repositories, mockeados con `jest.mock("../repositories/...")`; la ruta se prueba vía HTTP con `supertest` |
-| **Integración / caja negra** | `tests/*.test.js` (Jest + Supertest) o `karate/*.feature` (Karate) | ✍️ Lo escribes tú | Nada: todo el stack real, incluidos `db.js` y `data.json` |
+| **Unitaria** | `tests/unitarias/**` | ✅ Incluida (13 suites, 108 pruebas) | Todo — sin Express, sin HTTP, `src/db` mockeado con `jest.mock` |
+| **Componente** | `tests/componentes/**` | ✍️ Lo escribes tú | Los repositories, mockeados con `jest.mock`, y la ruta probada vía HTTP con `supertest`; o el servicio entero, doblado con un mock de Karate |
+| **Integración / caja negra** | `tests/integracion/**` | ✍️ Lo escribes tú | Nada: todo el stack real, incluidos `db.js` y `data.json` |
+| **End-to-end** | `tests/e2e/` → por la interfaz, en el repositorio del **frontend** | ✍️ Lo escribes tú | Nada: el sistema completo |
+
+Todo lo que es prueba vive bajo `tests/`, organizado **por nivel**: así la ruta de
+una prueba dice qué garantiza, y la pregunta «¿qué dejo real y qué doblo?» te lleva
+directo a la carpeta. `src/` queda solo con código de producción.
+Cada carpeta de nivel trae su propio README con la convención y un ejemplo.
 
 `npm test` corre `jest --runInBand` (en serie). Cuando escribas pruebas de integración
 que comparten `data.json`, mantenlo así: en paralelo pisarían el estado entre ellas, y
@@ -194,7 +200,16 @@ llama a `POST /api/test/reset` al inicio de cada suite.
 
 Las dependencias `supertest` y `@karatelabs/karate` ya están en `devDependencies`. Si
 usas Karate, el proyecto trae un `.npmrc` con `ignore-scripts=true` por una limitación
-del paquete; revisa su documentación para la configuración de la JVM (vía `jbang`).
+del paquete, y el lanzador ya resuelto en `tests/run-karate.js`:
+
+```bash
+npm run karate                         # todas las features de tests/
+npm run karate -- tests/integracion    # solo un nivel
+npm run karate -- --tags @componente   # por etiqueta
+```
+
+La primera corrida descarga jbang y el jar de Karate 1.5.2; puede tardar un par de
+minutos.
 
 **Nota sobre "prueba de componente":** en el syllabus ISTQB clásico, *component testing*
 es sinónimo de *unit testing*. En la pirámide moderna (Fowler), un *component test* es

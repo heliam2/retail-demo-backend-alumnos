@@ -8,6 +8,7 @@
     "start": "node src/server.js",
     "dev": "node src/server.js",
     "test": "jest --runInBand",
+    "karate": "node tests/run-karate.js",
     "seed": "node src/seed.js"
   },
   "dependencies": {
