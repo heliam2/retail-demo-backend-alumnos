@@ -1,0 +1,73 @@
+# ---------------------------------------------------------------------------
+# GATE DE SAST · clase 12
+#
+# SAST = Static Application Security Testing: busca patrones peligrosos en el
+# codigo fuente SIN ejecutarlo. No necesita servidor, ni datos, ni navegador.
+# Por eso corre en la etapa de commit, al lado del lint.
+#
+# Normalmente se usan reglas de catalogo (`semgrep --config=p/javascript`).
+# Aca las reglas estan escritas a mano a proposito, para que se vea que un
+# SAST no es magia: es comparacion de patrones contra el arbol sintactico.
+# `pattern` describe la forma del codigo, no el texto literal, asi que detecta
+# la misma construccion aunque cambien los nombres y los espacios.
+#
+# Las tres reglas encuentran defectos REALES de este repositorio, y ninguno de
+# los tres lo detecta ninguna de las 111 pruebas que pasan en verde. Esa es la
+# idea completa de sumar un gate distinto en lugar de mas pruebas del mismo
+# tipo: cada tecnica ve una familia de defectos que las otras no miran.
+# ---------------------------------------------------------------------------
+
+rules:
+  # -------------------------------------------------------------------------
+  - id: secreto-con-respaldo-en-codigo
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Secreto con valor de respaldo escrito en el codigo. Si la variable de
+      entorno no esta definida, la aplicacion arranca igual y firma los tokens
+      con un secreto que esta publicado en el repositorio: cualquiera puede
+      falsificar un token de administrador. El fallo es silencioso, porque todo
+      funciona. Un secreto ausente tiene que detener el arranque, no sustituirse.
+      CWE-798 (credenciales embebidas en el codigo).
+    patterns:
+      - pattern: process.env.$VAR || "..."
+      - metavariable-regex:
+          metavariable: $VAR
+          regex: (?i).*(secret|token|key|password|passwd|clave|api_?key).*
+
+  # -------------------------------------------------------------------------
+  - id: bcrypt-costo-debil
+    languages: [javascript]
+    severity: WARNING
+    message: >-
+      Factor de trabajo de bcrypt por debajo del minimo recomendado. OWASP
+      (Password Storage Cheat Sheet) pide "a minimum of 10"; este codigo usa un
+      valor menor, lo que abarata el descifrado por fuerza bruta si se filtra la
+      base. Subir el costo es cambiar un numero. CWE-916.
+    patterns:
+      - pattern-either:
+          - pattern: bcrypt.hashSync($PASS, $COSTO)
+          - pattern: bcrypt.hash($PASS, $COSTO, ...)
+      - metavariable-comparison:
+          metavariable: $COSTO
+          comparison: $COSTO < 10
+
+  # -------------------------------------------------------------------------
+  - id: hook-de-prueba-sin-guarda-de-entorno
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Endpoint de uso exclusivo para pruebas expuesto sin guarda de entorno.
+      Esta ruta reinicia los datos, no pide autenticacion y esta publicada en
+      openapi.yaml. Desplegada tal cual, cualquiera puede borrar la informacion
+      del sistema con una sola peticion. Un hook de prueba debe existir solo si
+      process.env.NODE_ENV !== "production", o no registrarse en ese entorno.
+    patterns:
+      - pattern: $APP.$METODO("=~/.*(test|debug|reset|seed).*/", ...)
+      # Si alguien ya envolvio el registro de la ruta en una guarda de entorno,
+      # la regla no debe reportarlo: eso es justamente el arreglo.
+      - pattern-not-inside: |
+          if (process.env.NODE_ENV !== "...") { ... }
+      - metavariable-regex:
+          metavariable: $METODO
+          regex: ^(get|post|put|delete|patch|all)$

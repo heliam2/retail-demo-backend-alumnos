@@ -114,3 +114,54 @@ Verifican **lo mismo**, con la **misma herramienta**. Lo único que cambia es a
 dónde apunta `url`: el sistema real en uno, un doble en el otro. Y eso cambia el
 nivel. Compruébalo apagando `npm run dev` y corriendo
 `npm run karate -- --tags @componente`: pasa igual, porque no necesita el backend.
+
+---
+
+## `contrato/` — el gate de contrato (clase 12)
+
+`contrato/openapi-vs-rutas.test.js` compara dos artefactos que tienen que decir
+lo mismo: el `openapi.yaml` que publicamos y las rutas que Express tiene
+realmente montadas. Hoy son 35 contra 35.
+
+No levanta el servidor y no hace una sola peticion HTTP: lee el contrato y le
+pregunta a Express. Por eso tarda **0,8 segundos** y puede vivir en la etapa de
+commit del pipeline, junto a las unitarias.
+
+```bash
+npm run test:contrato
+```
+
+Compruebalo: agrega `router.post("/cancel", ...)` en
+`src/routes/orders.routes.js`, no toques el `openapi.yaml`, y vuelve a correrlo.
+El gate se pone rojo nombrando la ruta.
+
+> **Precision importante:** esto es una verificacion **estatica de consistencia
+> entre codigo y contrato** (drift). NO es contract testing dirigido por el
+> consumidor (Pact), que es lo que la industria llama "contract testing" sin
+> calificar: ahi se verifican las expectativas de un consumidor concreto contra
+> las respuestas reales del proveedor. Esta prueba es mas barata y mas limitada:
+> detecta que el contrato quedo desactualizado, no que un consumidor se rompa.
+
+---
+
+## El pipeline (clase 12)
+
+`.github/workflows/pipeline.yml` y el `Jenkinsfile` hacen lo mismo con
+herramientas distintas:
+
+```
+ETAPA 1 · COMMIT        lint · unitarias · contrato · sast · dependencias
+(en paralelo, < 5 min)  nada de esto levanta nada
+         |
+ETAPA 2 · COMPONENTE    componentes          (levanta un doble)
+         |
+ETAPA 3 · INTEGRACION   integracion          (levanta la API real)
+         |
+PUERTA                  decide con lo que midieron los gates
+```
+
+La regla que ordena las etapas es la misma de la clase 11, movida un nivel:
+**la etapa la determina lo que la prueba necesita tener en pie**, no la
+herramienta. La prueba esta en el YAML: los jobs `componentes` e `integracion`
+corren el mismo Karate, y la unica diferencia entre los dos es que uno tiene la
+linea `npm run dev` y el otro no. **Esa ausencia es el nivel de prueba.**

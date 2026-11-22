@@ -120,9 +120,7 @@ describe("calculateOrderTotals", () => {
   });
 
   it("cobra envio a un peso menos del umbral (boundary)", () => {
-    const items = [{ productId: 3, quantity: 1 }, { productId: 1, quantity: 1 }];
-    // 30000 + 10000 = 40000, con 10% descuento => taxable 36000 (arriba del umbral igual)
-    // Probamos el caso justo por debajo usando un producto ad-hoc de 29999
+    // Probamos el caso justo por debajo usando un producto ad-hoc de 29999.
     const customProducts = [...products, { id: 99, price: 29999 }];
     const res = calculateOrderTotals({
       items: [{ productId: 99, quantity: 1 }],
