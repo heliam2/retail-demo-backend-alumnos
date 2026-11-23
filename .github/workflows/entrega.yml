@@ -1,0 +1,282 @@
+# ===========================================================================
+# ENTREGA · CERTIFICACION Y PRODUCCION · clase 12
+#
+# Este workflow es la segunda mitad del pipeline. El otro archivo
+# (pipeline.yml) responde "¿este commit es publicable?". Este responde
+# "¿lo publicamos, donde, y quien lo autoriza?".
+#
+#   pipeline.yml  ──verde──>  ARTEFACTO  ──>  CERTIFICACION  ──>  PRODUCCION
+#                             se construye     automatico        REQUIERE
+#                             UNA sola vez                       APROBACION
+#
+# LO QUE HAY QUE MIRAR EN CLASE, y es el corazon del archivo:
+#
+# El job `produccion` declara `environment: produccion`. Si ese Environment
+# tiene configurados "Required reviewers" en GitHub, el pipeline SE DETIENE
+# ahi y espera a que una persona apriete "Approve and deploy".
+#
+# Eso es, literalmente, la diferencia entre las dos CD de la clase:
+#   - Continuous DELIVERY  = este archivo con el revisor configurado.
+#     El cambio queda listo para publicarse; publica una persona.
+#   - Continuous DEPLOYMENT = el mismo archivo sin el revisor.
+#     El cambio llega a produccion sin que nadie mire.
+#
+# Se cambia de una a la otra marcando una casilla. No se toca una sola linea
+# de este archivo. Por eso la politica de entrega es una decision, no codigo.
+#
+# MODO SIMULACION:
+# Si no estan configurados los secrets de despliegue, los jobs NO fallan:
+# informan que corren en modo simulacion y siguen. Asi la clase puede ver el
+# flujo completo y la pausa de aprobacion sin tener ningun servidor. Cuando
+# existan los secrets, el mismo archivo despliega de verdad.
+# ===========================================================================
+
+name: Entrega · certificacion y produccion
+
+on:
+  # Arranca solo si el pipeline de calidad termino bien en main.
+  workflow_run:
+    workflows: ["Pipeline de calidad"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+# Un despliegue a medias no se cancela nunca. Al reves que en pipeline.yml,
+# donde cancelar la corrida vieja era lo correcto.
+concurrency:
+  group: entrega
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  # =========================================================================
+  # GUARDA · no se publica lo que no paso los gates
+  # =========================================================================
+  guarda:
+    name: "0 · ¿el commit es publicable?"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    outputs:
+      sha: ${{ steps.datos.outputs.sha }}
+      corto: ${{ steps.datos.outputs.corto }}
+    steps:
+      - id: datos
+        run: |
+          SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          echo "sha=$SHA"              >> $GITHUB_OUTPUT
+          echo "corto=${SHA:0:7}"      >> $GITHUB_OUTPUT
+          echo "Commit candidato: ${SHA:0:7}"
+
+  # =========================================================================
+  # ARTEFACTO · se construye UNA vez y se promueve el mismo a los dos ambientes
+  # Es el primero de los cuatro principios de Humble y Farley. Si cada
+  # ambiente construyera lo suyo, certificacion y produccion podrian diferir
+  # y lo aprobado no seria lo publicado.
+  # =========================================================================
+  artefacto:
+    name: "1 · construir el artefacto (una vez)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [guarda]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.guarda.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --omit=dev
+
+      - name: Empaquetar
+        run: |
+          mkdir -p dist
+          tar --exclude=./dist --exclude=./.git -czf dist/app.tgz \
+              src openapi.yaml package.json package-lock.json data.json
+          echo "${{ needs.guarda.outputs.corto }}" > dist/VERSION
+          ls -la dist/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: app-${{ needs.guarda.outputs.corto }}
+          path: dist/
+          retention-days: 7
+
+  # =========================================================================
+  # CERTIFICACION · automatico, sin intervencion
+  # =========================================================================
+  certificacion:
+    name: "2 · desplegar a CERTIFICACION"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [guarda, artefacto]
+    environment:
+      name: certificacion
+      url: ${{ vars.URL_CERTIFICACION }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.guarda.outputs.sha }}
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: app-${{ needs.guarda.outputs.corto }}
+          path: dist
+
+      - name: Desplegar
+        env:
+          HOOK: ${{ secrets.RENDER_HOOK_CERTIFICACION }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::notice::MODO SIMULACION — no hay secret RENDER_HOOK_CERTIFICACION."
+            echo "El flujo y la puerta de aprobacion se ven igual; no se despliega nada."
+            exit 0
+          fi
+          # El hook responde 200 enseguida: solo ACEPTA el despliegue, no lo
+          # termina. Por eso el paso siguiente espera, y no este.
+          curl -fsS -X POST "$HOOK" | head -c 300; echo
+
+      - name: Smoke · esperar a que responda LA VERSION NUEVA
+        env:
+          URL: ${{ vars.URL_CERTIFICACION }}
+          ESPERADO: ${{ needs.guarda.outputs.corto }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "::notice::MODO SIMULACION — no hay variable URL_CERTIFICACION."; exit 0
+          fi
+          # ESTO es lo que hay que mirar en clase:
+          # no basta con que /api/health responda 200. La version VIEJA tambien
+          # responde 200 mientras el despliegue avanza. Si el smoke se conforma
+          # con eso, da verde sobre el codigo anterior: un falso verde que
+          # ademas oculta un despliegue fallido. Por eso esperamos a que el
+          # health informe el commit que acabamos de publicar.
+          for i in $(seq 1 60); do
+            VISTO=$(curl -fsS "$URL/api/health" 2>/dev/null \
+                    | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')
+            if [ "$VISTO" = "$ESPERADO" ]; then
+              echo "Certificacion responde con $VISTO tras $((i*5))s"; exit 0
+            fi
+            echo "  esperando… health informa '${VISTO:-sin respuesta}', esperamos '$ESPERADO'"
+            sleep 5
+          done
+          echo "::error::La version $ESPERADO no llego a certificacion en 5 minutos."
+          exit 1
+
+      - name: Smoke · caminos criticos
+        env:
+          URL: ${{ vars.URL_CERTIFICACION }}
+        run: |
+          if [ -z "$URL" ]; then echo "::notice::MODO SIMULACION"; exit 0; fi
+          echo "— el catalogo responde"
+          curl -fsS "$URL/api/products" > /dev/null
+          echo "— una ruta inexistente responde 404, no 500"
+          test "$(curl -s -o /dev/null -w '%{http_code}' "$URL/api/no-existe")" = "404"
+          echo "— cotizar sin token responde 401"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/api/orders/quote")" = "401"
+          echo "Smoke de certificacion OK"
+
+  # =========================================================================
+  # PRODUCCION · AQUI SE DETIENE Y ESPERA A UNA PERSONA
+  #
+  # El `environment: produccion` es lo unico que hace falta. Con "Required
+  # reviewers" configurado en GitHub, este job no arranca hasta que alguien
+  # aprueba, y GitHub muestra quien aprobo y cuando.
+  # =========================================================================
+  produccion:
+    name: "3 · desplegar a PRODUCCION (requiere aprobacion)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [guarda, certificacion]
+    environment:
+      name: produccion
+      url: ${{ vars.URL_PRODUCCION }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.guarda.outputs.sha }}
+
+      - uses: actions/download-artifact@v7
+        with:
+          # El MISMO artefacto que se desplego a certificacion. No se vuelve
+          # a construir: si se reconstruyera, nadie podria afirmar que lo
+          # aprobado y lo publicado son lo mismo.
+          name: app-${{ needs.guarda.outputs.corto }}
+          path: dist
+
+      - name: Desplegar
+        env:
+          HOOK: ${{ secrets.RENDER_HOOK_PRODUCCION }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::notice::MODO SIMULACION — no hay secret RENDER_HOOK_PRODUCCION."; exit 0
+          fi
+          curl -fsS -X POST "$HOOK" | head -c 300; echo
+
+      - name: Smoke · esperar a que responda LA VERSION NUEVA
+        env:
+          URL: ${{ vars.URL_PRODUCCION }}
+          ESPERADO: ${{ needs.guarda.outputs.corto }}
+        run: |
+          if [ -z "$URL" ]; then echo "::notice::MODO SIMULACION"; exit 0; fi
+          for i in $(seq 1 60); do
+            VISTO=$(curl -fsS "$URL/api/health" 2>/dev/null \
+                    | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')
+            if [ "$VISTO" = "$ESPERADO" ]; then
+              echo "Produccion responde con $VISTO tras $((i*5))s"; exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::La version $ESPERADO no llego a produccion en 5 minutos."
+          exit 1
+
+      - name: Smoke de produccion
+        env:
+          URL: ${{ vars.URL_PRODUCCION }}
+        run: |
+          if [ -z "$URL" ]; then echo "::notice::MODO SIMULACION"; exit 0; fi
+          curl -fsS "$URL/api/products" > /dev/null
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/api/orders/quote")" = "401"
+          # Gate de despliegue nacido de un hallazgo del SAST:
+          # el hook de pruebas NO puede existir en produccion. Si responde algo
+          # distinto de 404, cualquiera puede borrar los datos con una peticion.
+          CODIGO=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL/api/test/reset")
+          if [ "$CODIGO" = "404" ]; then
+            echo "El hook /api/test/reset NO existe en produccion. Correcto."
+          else
+            echo "::error::/api/test/reset responde $CODIGO en PRODUCCION. Cualquiera puede borrar los datos."
+            exit 1
+          fi
+
+  # =========================================================================
+  # RESUMEN
+  # =========================================================================
+  resumen:
+    name: "Resumen de la entrega"
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [guarda, artefacto, certificacion, produccion]
+    steps:
+      - run: |
+          {
+            echo "## Entrega del commit \`${{ needs.guarda.outputs.corto }}\`"
+            echo ""
+            echo "| Paso | Resultado |"
+            echo "|---|---|"
+            echo "| Artefacto construido | ${{ needs.artefacto.result }} |"
+            echo "| Certificacion | ${{ needs.certificacion.result }} |"
+            echo "| Produccion | ${{ needs.produccion.result }} |"
+            echo ""
+            if [ "${{ needs.produccion.result }}" = "skipped" ]; then
+              echo "> Produccion quedo en espera de aprobacion, o fue rechazada."
+              echo "> Eso no es una falla: es Continuous Delivery funcionando."
+            fi
+          } >> $GITHUB_STEP_SUMMARY

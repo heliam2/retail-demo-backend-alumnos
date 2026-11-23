@@ -165,3 +165,38 @@ La regla que ordena las etapas es la misma de la clase 11, movida un nivel:
 herramienta. La prueba esta en el YAML: los jobs `componentes` e `integracion`
 corren el mismo Karate, y la unica diferencia entre los dos es que uno tiene la
 linea `npm run dev` y el otro no. **Esa ausencia es el nivel de prueba.**
+
+---
+
+## Certificacion y produccion (clase 12)
+
+`.github/workflows/entrega.yml` es la segunda mitad del pipeline. `pipeline.yml`
+responde *«¿este commit es publicable?»*; `entrega.yml` responde *«¿lo
+publicamos, donde, y quien lo autoriza?»*.
+
+```
+pipeline.yml ──verde──> ARTEFACTO ──> CERTIFICACION ──> PRODUCCION
+                        se construye   automatico       REQUIERE
+                        UNA sola vez                    APROBACION
+```
+
+El job `produccion` declara `environment: produccion`. Si ese Environment
+tiene "Required reviewers" configurado en GitHub, **el pipeline se detiene ahi
+y espera a que una persona apruebe**. Esa casilla es, literalmente, la
+diferencia entre las dos CD:
+
+| | Con revisor | Sin revisor |
+|---|---|---|
+| | Continuous **Delivery** | Continuous **Deployment** |
+| Quien publica | una persona | nadie |
+
+Se cambia de una a la otra marcando una casilla, sin tocar el YAML.
+
+**Modo simulacion.** Sin los secrets de despliegue, los jobs no fallan: avisan
+que corren en modo simulacion y siguen. El flujo completo y la pausa de
+aprobacion se ven igual, sin tener ningun servidor.
+
+**El smoke espera la version nueva, no una respuesta.** `/api/health` informa
+el commit desplegado, y el smoke espera a ver *ese* commit. Conformarse con un
+200 da verde sobre el codigo anterior mientras el despliegue todavia avanza:
+un falso verde que ademas oculta un despliegue fallido.
