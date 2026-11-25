@@ -101,7 +101,7 @@ jobs:
         run: |
           mkdir -p dist
           tar --exclude=./dist --exclude=./.git -czf dist/app.tgz \
-              src openapi.yaml package.json package-lock.json data.json
+              src openapi.yaml package.json package-lock.json
           echo "${{ needs.guarda.outputs.corto }}" > dist/VERSION
           ls -la dist/
 
