@@ -200,49 +200,26 @@ jobs:
   # Aca si se levanta la API real. Mismo Karate, misma sintaxis, otro nivel.
   # =========================================================================
 
-  integracion:
-    name: "3 · pruebas de integracion"
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [componentes]
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-      - run: npm ci
-
-      - name: Levantar la API en el puerto 4000
-        run: npm run dev &
-
-      # Esperar por el health check, no por un numero de segundos. Un `sleep 10`
-      # es la causa numero uno de pipelines intermitentes: a veces 10 segundos
-      # alcanzan y a veces no, y entonces el pipeline falla sin defecto.
-      - name: Esperar a que responda
-        run: |
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:4000/api/health > /dev/null; then
-              echo "API arriba tras ${i}s"; exit 0
-            fi
-            sleep 1
-          done
-          echo "La API no respondio en 30s"; exit 1
-
-      - name: Karate · tests/integracion
-        run: npm run karate -- tests/integracion
-
-      - name: Guardar el reporte de Karate
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: reporte-karate-integracion
-          path: target/karate-reports/
-          if-no-files-found: ignore
+  # =========================================================================
+  # LA INTEGRACION NO ESTA AQUI, Y ES A PROPOSITO
+  #
+  # Hasta la version anterior de este archivo, las pruebas de integracion
+  # corrian en esta etapa: el runner levantaba la API con `npm run dev &` y
+  # Karate le pegaba a localhost:4000.
+  #
+  # Eso verifica que el CODIGO integra. No verifica que el DESPLIEGUE funciona,
+  # que es una pregunta distinta: configuracion, variables de ambiente, red,
+  # base de datos real, version publicada. Y en la mayoria de los sistemas de
+  # verdad no se puede hacer de la otra forma, porque el ambiente no se deja
+  # levantar en un runner: hay dependencias externas, licencias, datos que
+  # viven en un servidor y no en un archivo.
+  #
+  # Por eso la integracion se movio a entrega.yml, DESPUES de desplegar a
+  # certificacion, y corre contra el ambiente desplegado. Lo que se gana es
+  # que la prueba ahora puede fallar por una causa que antes era invisible.
+  # Lo que se pierde hay que decirlo igual: el aviso llega mas tarde y despues
+  # del merge. Esa es la negociacion, y no tiene una respuesta universal.
+  # =========================================================================
 
   # =========================================================================
   # PUERTA
@@ -254,7 +231,7 @@ jobs:
     name: "Puerta de calidad"
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, unitarias, contrato, sast, dependencias, componentes, integracion]
+    needs: [lint, unitarias, contrato, sast, dependencias, componentes]
     steps:
       - name: Resumen
         run: |
@@ -269,7 +246,8 @@ jobs:
             echo "| SAST | 1 commit | ${{ needs.sast.result }} | no |"
             echo "| dependencias | 1 commit | ${{ needs.dependencias.result }} | no |"
             echo "| componentes | 2 | ${{ needs.componentes.result }} | si |"
-            echo "| integracion | 3 | ${{ needs.integracion.result }} | si |"
+            echo ""
+            echo "La integracion y el E2E no corren aca: corren en \`entrega.yml\` contra el ambiente de certificacion ya desplegado."
           } >> $GITHUB_STEP_SUMMARY
 
       - name: Decidir
@@ -280,8 +258,7 @@ jobs:
           if [ "${{ needs.lint.result }}" = "success" ] \
           && [ "${{ needs.unitarias.result }}" = "success" ] \
           && [ "${{ needs.contrato.result }}" = "success" ] \
-          && [ "${{ needs.componentes.result }}" = "success" ] \
-          && [ "${{ needs.integracion.result }}" = "success" ]; then
+          && [ "${{ needs.componentes.result }}" = "success" ]; then
             echo "Puerta abierta: el commit es candidato a publicarse."
           else
             echo "Puerta cerrada: al menos un gate bloqueante no paso."

@@ -76,7 +76,10 @@ module.exports = [
      * deja de leer, y un gate que no se lee no es un gate.
      */
     files: ["tests/karate-config.js"],
-    languageOptions: { globals: { karate: "readonly" } },
+    // `java` tambien lo inyecta Karate: su motor de JS corre sobre la JVM y
+    // deja alcanzable el arbol de clases de Java. Lo usamos para leer una
+    // variable de ambiente (java.lang.System.getenv) y para el reloj.
+    languageOptions: { globals: { karate: "readonly", java: "readonly" } },
     rules: { "no-unused-vars": "off" },
   },
   {

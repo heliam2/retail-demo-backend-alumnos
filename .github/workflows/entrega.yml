@@ -185,6 +185,140 @@ jobs:
           echo "Smoke de certificacion OK"
 
   # =========================================================================
+  # PRUEBAS CONTRA EL AMBIENTE DESPLEGADO
+  #
+  # Aqui vive ahora lo que antes corria en pipeline.yml contra una API
+  # levantada en el runner. La diferencia no es de ubicacion: es de ALCANCE.
+  #
+  #   En el runner se prueba el CODIGO.
+  #   Aqui se prueba el SISTEMA DESPLEGADO: el codigo mas su configuracion,
+  #   sus variables de ambiente, su red y su base de datos.
+  #
+  # Un defecto de despliegue -una variable que falta, un CORS mal puesto, una
+  # migracion que no corrio- es invisible en el runner y salta aqui. Es la
+  # unica etapa del pipeline que puede afirmar algo sobre el despliegue.
+  #
+  # Y es bloqueante: si falla, la aprobacion de produccion no se llega a pedir.
+  # Nadie tiene que decidir sobre un cambio que ya se sabe que esta roto.
+  #
+  # EL ORDEN DE LOS DOS PASOS DE KARATE NO ES ARBITRARIO:
+  # integracion usa /api/test/reset -borra la base y la vuelve al seed-, y el
+  # E2E no lo usa ni lo tolera. Primero la que resetea, despues la que no. Al
+  # reves, el reset caeria en medio del viaje del E2E y lo romperia sin que
+  # hubiera un defecto.
+  # =========================================================================
+  pruebas_certificacion:
+    name: "2.1 · pruebas contra CERTIFICACION"
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: [guarda, certificacion]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.guarda.outputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: npm ci
+
+      # -------------------------------------------------------------------
+      # A que ambiente le pegamos.
+      #
+      # Con URL_CERTIFICACION configurada, a certificacion de verdad: esto es
+      # lo que se quiere.
+      #
+      # Sin ella, el job levanta el artefacto en el runner y lo dice fuerte.
+      # Es un SUPLENTE, y conviene tenerlo claro: deja ver la mecanica, pero
+      # vuelve a probar solo el codigo. Las fallas de despliegue siguen siendo
+      # invisibles. En cuanto exista la variable, el mismo YAML prueba de
+      # verdad sin cambiar una linea.
+      # -------------------------------------------------------------------
+      - name: Resolver el ambiente
+        id: amb
+        env:
+          URL: ${{ vars.URL_CERTIFICACION }}
+        run: |
+          if [ -n "$URL" ]; then
+            # karate-config.js espera la URL con el /api incluido; la variable
+            # del repositorio guarda solo el host. Se concatena aqui y en un
+            # solo lugar.
+            echo "base=$URL/api"        >> $GITHUB_OUTPUT
+            echo "remoto=si"            >> $GITHUB_OUTPUT
+            echo "Ambiente: $URL (certificacion desplegada)"
+          else
+            echo "base=http://localhost:4000/api" >> $GITHUB_OUTPUT
+            echo "remoto=no"                      >> $GITHUB_OUTPUT
+            echo "::warning::SUPLENTE — no hay URL_CERTIFICACION. Las pruebas corren contra una API levantada en el runner, asi que NO verifican el despliegue."
+          fi
+
+      - name: Levantar el suplente en el runner
+        if: steps.amb.outputs.remoto == 'no'
+        run: |
+          npm run dev &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4000/api/health > /dev/null; then
+              echo "API arriba tras ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::La API no respondio en 30s"; exit 1
+
+      - name: Comprobar que el ambiente esta vivo
+        env:
+          BASE: ${{ steps.amb.outputs.base }}
+        run: |
+          # Un fallo aqui no es un defecto del producto: es el ambiente caido.
+          # Vale separarlo de las pruebas para que el log lo diga sin ambiguedad.
+          if ! curl -fsS "$BASE/health"; then
+            echo "::error::El ambiente no responde en $BASE. Las pruebas no corrieron."
+            exit 1
+          fi
+          echo
+
+      # Primero la que resetea la base.
+      - name: Karate · integracion
+        env:
+          BASE_URL: ${{ steps.amb.outputs.base }}
+        run: npm run karate -- tests/integracion
+
+      # Despues la que no la toca.
+      - name: Karate · E2E de backend
+        env:
+          BASE_URL: ${{ steps.amb.outputs.base }}
+        run: npm run karate -- tests/e2e
+
+      - name: Guardar los reportes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reporte-pruebas-certificacion
+          path: target/karate-reports/
+          if-no-files-found: ignore
+
+      - name: Resumen
+        if: always()
+        run: |
+          {
+            echo "## Pruebas contra certificacion"
+            echo ""
+            if [ "${{ steps.amb.outputs.remoto }}" = "si" ]; then
+              echo "Ambiente: **certificacion desplegada** (\`${{ vars.URL_CERTIFICACION }}\`)"
+            else
+              echo "Ambiente: **suplente en el runner**. No se verifico el despliegue."
+            fi
+            echo ""
+            echo "| Nivel | Que prueba | Resetea la base |"
+            echo "|---|---|---|"
+            echo "| integracion | reglas de negocio por la API, stack real | si |"
+            echo "| E2E backend | el viaje completo de una compra | no |"
+          } >> $GITHUB_STEP_SUMMARY
+
+  # =========================================================================
   # PRODUCCION · AQUI SE DETIENE Y ESPERA A UNA PERSONA
   #
   # El `environment: produccion` es lo unico que hace falta. Con "Required
@@ -195,7 +329,7 @@ jobs:
     name: "3 · desplegar a PRODUCCION (requiere aprobacion)"
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [guarda, certificacion]
+    needs: [guarda, certificacion, pruebas_certificacion]
     environment:
       name: produccion
       url: ${{ vars.URL_PRODUCCION }}
@@ -263,7 +397,7 @@ jobs:
     name: "Resumen de la entrega"
     runs-on: ubuntu-latest
     if: always()
-    needs: [guarda, artefacto, certificacion, produccion]
+    needs: [guarda, artefacto, certificacion, pruebas_certificacion, produccion]
     steps:
       - run: |
           {
@@ -273,6 +407,7 @@ jobs:
             echo "|---|---|"
             echo "| Artefacto construido | ${{ needs.artefacto.result }} |"
             echo "| Certificacion | ${{ needs.certificacion.result }} |"
+            echo "| Pruebas en certificacion | ${{ needs.pruebas_certificacion.result }} |"
             echo "| Produccion | ${{ needs.produccion.result }} |"
             echo ""
             if [ "${{ needs.produccion.result }}" = "skipped" ]; then
