@@ -67,6 +67,14 @@ paths:
                   status:
                     type: string
                     example: ok
+                  version:
+                    type: string
+                    description: Version desplegada. "dev" cuando corre local.
+                    example: "1.0.0"
+                  commit:
+                    type: string
+                    description: Primeros 7 caracteres del commit desplegado.
+                    example: a5f3f2a
                 required: [status]
 
   /test/reset:

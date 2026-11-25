@@ -1,0 +1,289 @@
+# ===========================================================================
+# PIPELINE DE CALIDAD · clase 12 del diplomado
+#
+# Este archivo es el pipeline de la clase, escrito para leerse. Cada `job` es
+# un gate y el orden de los gates esta dado por `needs:`, no por el orden en
+# que aparecen aca.
+#
+#   ETAPA 1 · COMMIT          lint · unitarias · contrato · sast · dependencias
+#   (en paralelo, < 5 min)    todo lo que NO necesita levantar nada
+#            |
+#            v
+#   ETAPA 2 · COMPONENTE      componentes
+#   (dobles)                  levanta un doble, no el sistema
+#            |
+#            v
+#   ETAPA 3 · INTEGRACION     integracion
+#   (sistema real)            levanta la API de verdad en el puerto 4000
+#            |
+#            v
+#   PUERTA                    decide con lo que midieron los gates
+#
+# LA REGLA QUE ORDENA TODO, y es la misma de la clase 11:
+# la etapa la determina **lo que la prueba necesita tener en pie**, no la
+# herramienta con que esta escrita. Karate aparece en la etapa 2 y en la 3; lo
+# unico que cambia es si hay un servidor real detras. Las unitarias y el gate
+# de contrato van primero no porque sean "mas importantes", sino porque no
+# necesitan nada y por eso son baratas.
+#
+# NOTA SOBRE LAS VERSIONES: las versiones de las actions (@v6, @v7...) se
+# mueven varias veces al ano. Las de aca estaban vigentes en noviembre de 2026.
+# Se fijan por version mayor a proposito: sin fijarlas, el pipeline cambia solo
+# y un dia falla sin que nadie haya tocado nada. Revisarlas es mantenimiento
+# del pipeline, igual que mantener las pruebas.
+# ===========================================================================
+
+name: Pipeline de calidad
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:          # permite correrlo a mano, util en clase
+  schedule:
+    - cron: "0 7 * * *"       # 04:00 en Chile continental (UTC-3)
+
+# Si llegan tres commits seguidos, interesa el ultimo. Esto cancela las
+# corridas viejas en vez de dejarlas haciendo cola: el feedback que importa es
+# el del codigo actual.
+concurrency:
+  group: pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+# Cada gate invoca un script de package.json, no un comando propio. Es a
+# proposito: asi el pipeline corre EXACTAMENTE lo que corres en tu terminal.
+# Si el pipeline tiene invocaciones que solo existen en el YAML, una falla del
+# pipeline no se puede reproducir localmente, y entonces se depura a ciegas,
+# commit por commit, esperando la corrida.
+env:
+  NODE_VERSION: "24"
+
+jobs:
+  # =========================================================================
+  # ETAPA 1 · COMMIT
+  # Presupuesto de toda la etapa: 5 minutos. Los cinco jobs corren a la vez,
+  # asi que la etapa tarda lo que tarde el mas lento, no la suma.
+  # =========================================================================
+
+  lint:
+    name: "1 · lint"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Sin --max-warnings: los `no-console` son advertencias y no deben
+      # detener el pipeline. ESLint devuelve 0 si solo hay advertencias.
+      - name: ESLint
+        run: npm run lint
+
+  unitarias:
+    name: "1 · pruebas unitarias"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Jest · tests/unitarias
+        run: npm run test:unitarias
+
+  contrato:
+    name: "1 · gate de contrato"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Compara openapi.yaml con las rutas que Express tiene montadas.
+      # No levanta el servidor: tarda menos de un segundo.
+      - name: openapi.yaml contra las rutas reales
+        run: npm run test:contrato
+
+  sast:
+    name: "1 · SAST (informativo)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    # GATE INFORMATIVO. Reporta y no bloquea.
+    #
+    # Por que: en un repositorio que ya existe, el primer SAST siempre
+    # encuentra cosas. Si se bloquea desde el dia uno, nadie puede integrar y
+    # el equipo termina saltandose el gate. El camino que funciona es entrar
+    # informativo, arreglar lo que aparecio, y recien entonces bloquear.
+    # Dejarlo informativo para siempre, en cambio, es tener un gate decorativo.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - run: pip install semgrep
+      - name: Semgrep · reglas propias
+        run: semgrep --config=.semgrep/reglas.yml --metrics=off --sarif --output=semgrep.sarif src/
+      - name: Semgrep · en consola
+        if: always()
+        run: semgrep --config=.semgrep/reglas.yml --metrics=off src/ || true
+      - name: Guardar el reporte
+        if: always()            # tambien cuando el gate falla: un gate rojo
+        uses: actions/upload-artifact@v7   # sin evidencia no sirve de nada
+        with:
+          name: reporte-sast
+          path: semgrep.sarif
+          if-no-files-found: ignore
+
+  dependencias:
+    name: "1 · dependencias / SCA (informativo)"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # `npm audit` es SCA (Software Composition Analysis), NO es SAST:
+      # no mira nuestro codigo, mira las versiones de las librerias que
+      # usamos contra una base de vulnerabilidades conocidas.
+      - name: npm audit
+        run: npm run sca
+
+  # =========================================================================
+  # ETAPA 2 · COMPONENTE
+  # Necesita Java porque Karate corre sobre la JVM. No necesita el backend:
+  # contra-doble.feature levanta su propio doble con karate.start().
+  # =========================================================================
+
+  componentes:
+    name: "2 · pruebas de componente"
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [lint, unitarias, contrato]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: npm ci
+      # Fijate en lo que NO hay aca: ningun `npm run dev`. Esta etapa no
+      # levanta el sistema. Esa ausencia es lo que la hace una prueba de
+      # componente y no de integracion.
+      - name: Karate · etiqueta @componente
+        run: npm run karate -- --tags @componente
+      - name: Guardar el reporte de Karate
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reporte-karate-componentes
+          path: target/karate-reports/
+          if-no-files-found: ignore
+
+  # =========================================================================
+  # ETAPA 3 · INTEGRACION
+  # Aca si se levanta la API real. Mismo Karate, misma sintaxis, otro nivel.
+  # =========================================================================
+
+  integracion:
+    name: "3 · pruebas de integracion"
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [componentes]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: npm ci
+
+      - name: Levantar la API en el puerto 4000
+        run: npm run dev &
+
+      # Esperar por el health check, no por un numero de segundos. Un `sleep 10`
+      # es la causa numero uno de pipelines intermitentes: a veces 10 segundos
+      # alcanzan y a veces no, y entonces el pipeline falla sin defecto.
+      - name: Esperar a que responda
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:4000/api/health > /dev/null; then
+              echo "API arriba tras ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "La API no respondio en 30s"; exit 1
+
+      - name: Karate · tests/integracion
+        run: npm run karate -- tests/integracion
+
+      - name: Guardar el reporte de Karate
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reporte-karate-integracion
+          path: target/karate-reports/
+          if-no-files-found: ignore
+
+  # =========================================================================
+  # PUERTA
+  # Un job que no mide nada: solo decide. Separar la medicion de la decision
+  # permite cambiar la politica (que bloquea y que no) sin tocar ningun gate.
+  # =========================================================================
+
+  puerta:
+    name: "Puerta de calidad"
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [lint, unitarias, contrato, sast, dependencias, componentes, integracion]
+    steps:
+      - name: Resumen
+        run: |
+          {
+            echo "## Puerta de calidad"
+            echo ""
+            echo "| Gate | Etapa | Resultado | Bloquea |"
+            echo "|---|---|---|---|"
+            echo "| lint | 1 commit | ${{ needs.lint.result }} | si |"
+            echo "| unitarias | 1 commit | ${{ needs.unitarias.result }} | si |"
+            echo "| contrato | 1 commit | ${{ needs.contrato.result }} | si |"
+            echo "| SAST | 1 commit | ${{ needs.sast.result }} | no |"
+            echo "| dependencias | 1 commit | ${{ needs.dependencias.result }} | no |"
+            echo "| componentes | 2 | ${{ needs.componentes.result }} | si |"
+            echo "| integracion | 3 | ${{ needs.integracion.result }} | si |"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Decidir
+        # La politica, en una linea legible: los gates bloqueantes tienen que
+        # estar en success. SAST y dependencias quedan fuera de la condicion a
+        # proposito: informan, no bloquean.
+        run: |
+          if [ "${{ needs.lint.result }}" = "success" ] \
+          && [ "${{ needs.unitarias.result }}" = "success" ] \
+          && [ "${{ needs.contrato.result }}" = "success" ] \
+          && [ "${{ needs.componentes.result }}" = "success" ] \
+          && [ "${{ needs.integracion.result }}" = "success" ]; then
+            echo "Puerta abierta: el commit es candidato a publicarse."
+          else
+            echo "Puerta cerrada: al menos un gate bloqueante no paso."
+            exit 1
+          fi
