@@ -20,7 +20,7 @@ app.use(express.json());
 // El health informa QUE VERSION esta corriendo, no solo que algo responde.
 // Sin este dato, un smoke test despues de un despliegue no puede distinguir
 // "la version nueva ya esta arriba" de "la version vieja sigue contestando",
-// que es el falso verde mas caro de un pipeline de entrega.
+// que es el falso verde mas caro de un pipeline de entrega. Demo para activar pipeline
 app.get("/api/health", (req, res) =>
   res.json({
     status: "ok",
