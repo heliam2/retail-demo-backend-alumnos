@@ -53,9 +53,26 @@ function fn() {
     config.baseUrl = 'http://qa.interno:4000/api';
   }
 
+  // --- Ambiente desplegado (certificacion, produccion) ---
+  // Si existe la variable de ambiente BASE_URL, gana sobre todo lo anterior.
+  // Es asi para que el pipeline pueda apuntar las mismas features al ambiente
+  // que acaba de desplegar, sin tocar este archivo ni agregar un env nuevo
+  // por cada servidor que aparezca. La regla sigue intacta: la URL se decide
+  // en un solo lugar, y ese lugar es este.
+  const urlDesplegada = java.lang.System.getenv('BASE_URL');
+  if (urlDesplegada) {
+    config.baseUrl = urlDesplegada;
+    config.remoto = true;
+    karate.log('Ambiente desplegado:', urlDesplegada);
+  }
+
   // Timeouts generosos: la primera corrida puede encontrarse el servidor frio.
-  karate.configure('connectTimeout', 10000);
-  karate.configure('readTimeout', 10000);
+  // Contra un ambiente desplegado se triplican: un servicio que viene de
+  // dormir tarda lo suyo en el primer golpe, y confundir arranque en frio con
+  // defecto es la forma mas rapida de volver inestable una prueba que no lo es.
+  const espera = config.remoto ? 30000 : 10000;
+  karate.configure('connectTimeout', espera);
+  karate.configure('readTimeout', espera);
 
   return config;
 }
