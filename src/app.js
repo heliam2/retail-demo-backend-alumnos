@@ -17,7 +17,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// El health informa QUE VERSION esta corriendo, no solo que algo responde.
+// El health informa QUE VERSION esta corriendo, no solo que algo responde.  Se agrega comentario para la demo de la clase de pipelines
 // Sin este dato, un smoke test despues de un despliegue no puede distinguir
 // "la version nueva ya esta arriba" de "la version vieja sigue contestando",
 // que es el falso verde mas caro de un pipeline de entrega. Demo para activar pipeline
